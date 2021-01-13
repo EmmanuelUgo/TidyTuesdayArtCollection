@@ -1,0 +1,280 @@
+---
+title: "TidyTuesdatArtCollection"
+author: "Emmanuel Ugochukwu"
+date: "1/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(countrycode)
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(sf)
+library(extrafont)
+library(Cairo)
+
+loadfonts(device = "win")
+
+theme_set(theme_bw())
+```
+
+```{r}
+artists <- readr::read_csv("https://github.com/tategallery/collection/raw/master/artist_data.csv")
+```
+
+
+
+```{r}
+
+
+artists %>%
+  drop_na(placeOfBirth) %>%
+  separate(placeOfBirth,c("city","country"), sep = ",") %>%
+  count(country, sort = T) %>%
+  drop_na() %>%
+  pull(country) -> countries
+
+  countrycode(country_combined$country_en, origin = 'country.name', destination = 'iso3c' )
+  
+cldr_examples
+```
+
+```{r}
+## Pulling out list of countries
+countries <- 
+  artists %>%
+  drop_na(placeOfBirth) %>%
+  separate(placeOfBirth,c("city","country"), sep = ",") %>%
+  count(country, sort = T) %>%
+  drop_na() %>%
+  mutate(country = str_to_lower(country)) %>%
+  pull(country) %>% 
+  str_remove(" ") 
+
+## Manually imputing country names in English
+countries_manual <- tibble(country = countries,
+  country_en = c("UK","US","France","Germany","Italy","Ireland",
+                                       "Canada","Netherlands","Poland","Belgium","Russia","Spain",
+                                       "Switzerland","Austria","Brazil","Japan","Australia","India",
+                                       "China","Argentina","South Africa","Ukraine","Romania","Czechia",
+                                       "Greece","Mexico","Portugal","Sweeden","New Zealand","Israel",
+                                       "Cuba","Iran","Lebanon","Denmark","Croatia","Hungary",
+                                       "Egypt","Venezuela","Colombia","Chile","Pakistan","Slovenia",
+                                       "Turkey","Belarus","Serbia","Latvia","Norway","Peru",
+                                       "Slovakia","Algeria","Bosnia and Herzegovina","Bulgaria","Colombia","Indonesia",
+                                       "Mauritius","Israel","Sri Lanka","South Korea","Iraq","Bahamas",
+                                       "Bangladesh","Benin","Cameroon","North Korea","France","Estonia",
+                                       "Guyana","Iceland","Jamaica","Kenya","Laos","Luxembourg",
+                                    "North Macedonia","Malaysia","Malta","Moldova","Nicaragua","Croatia",
+                                       "Panama","Philipines","Thailand","Albania","Finland","Syria",
+                                       "Tanzania","Tunisia","Uganda","Vietnam","Zambia"))
+
+## extracting countries from country column
+country_1 <- artists %>%
+  drop_na(placeOfBirth) %>%
+  separate(placeOfBirth, c("city", "country"), sep = ",") %>%
+  count(country, sort = T, name = "count_1") %>%
+  ungroup() %>%
+  mutate(country = str_to_lower(country) %>% str_remove(" ")) %>%
+  drop_na()
+
+## extracting countries from city column
+country_2 <- artists %>%
+  drop_na(placeOfBirth) %>%
+  separate(placeOfBirth, c("city", "country"), sep = ",") %>%
+  filter(is.na(country)) %>%
+  select(country = city) %>%
+  mutate(country = str_to_lower(country)) %>%
+  mutate(country_test = ifelse(country %in% countries, "yes", "no")) %>%
+  filter(country_test == "yes") %>%
+  count(country, sort = T, name = "count_2") %>%
+  ungroup()
+
+## Compiling and imputing
+country_combined <- country_1 %>%
+  left_join(country_2) %>%
+  mutate(count_2 = ifelse(is.na(count_2), 0, count_2),
+         total = count_1 + count_2) %>%
+  left_join(countries_manual) %>%
+  mutate(code = countrycode(country_en, origin = 'country.name', destination = 'iso3c')) %>%
+  select(country, country_en, code, total) %>%
+  mutate(code = case_when(
+    country_en == "Sweeden" ~ "SWE",
+    country_en == "Philipines" ~ "PHL",
+    TRUE ~ code
+  ))
+
+## Preparing data for plot
+contt <- country_combined %>%
+  select(code,total) %>%
+  mutate(breaks = case_when(total >= 1 & total <= 10 ~ "1 - 10",
+                            total > 10 & total <= 30 ~ "11 - 30",
+                            total > 30 & total <= 100 ~ "31 - 100",
+                            total > 100 & total <= 1000 ~ "101 - 1000",
+                            TRUE ~ "Above 1000") %>%
+           factor(levels = c("1 - 10","11 - 30","31 - 100","101 - 1000","Above 1000")))
+  
+
+contt %>% summary()
+```
+
+
+```{r}
+## get map data
+map_data <- ne_countries(scale = "medium", returnclass = "sf")
+
+## manually create legend colors
+map_color <-c( NULL = "#B7B7A4","1 - 10" = "#175676",
+               "11 - 30" = "#283845", "31 - 100" ="#B8B08D",
+              "101 - 1000" = "#F2D492","Above 1000" = "#F29559") 
+
+```
+
+```{r}
+## Creating map World map
+(
+  world_map <-
+    map_data %>%
+    left_join(contt, by = c("adm0_a3" = "code")) %>%
+    ggplot(aes(fill = breaks)) +
+    geom_sf() +
+    
+    ## map locations
+    annotate(
+      geom = "rect",
+      xmin = -15.5,
+      xmax =  45.4,
+      ymin = 36.4,
+      ymax =  70.5,
+      fill = NA,
+      color = "black"
+    ) +
+    annotate(
+      geom = "rect",
+      xmin = 96.5,
+      xmax =  142.4,
+      ymin = -15.4,
+      ymax =  22.5,
+      fill = NA,
+      color = "black"
+    ) +
+    
+    ## set legend colors
+    scale_fill_manual(values = map_color) +
+    
+    ## change legend title
+    labs(fill = "# of Artists") +
+    
+    ## edits
+    theme(
+      plot.background = element_rect(fill = "azure"),
+      panel.background = element_rect(fill = "azure"),
+      panel.border = element_rect(fill = NA),
+      legend.position = "left",
+      legend.key.height = unit(0.5, "cm"),
+      legend.key.width = unit(1, "cm"),
+      legend.background = element_rect(fill = "azure"),
+      text = element_text(family = "Verdana")
+    )
+)
+```
+
+
+```{r}
+## Creating map to show SE Asia
+(
+  asia_map <-
+    map_data %>%
+    left_join(contt, by = c("adm0_a3" = "code")) %>%
+    ggplot(aes(fill = breaks)) +
+    geom_sf(color = "#000000") +
+    ## crop location
+    coord_sf(
+      xlim = c(96.5, 142.4),
+      ylim = c(-15.4, 22.5),
+      expand = FALSE) +
+    ## set legend colors
+    scale_fill_manual(values = map_color) +
+    ##edits
+    theme(
+      panel.background = element_rect(fill = "azure"),
+      panel.border = element_rect(fill = NA),
+      axis.title = element_blank(),
+      legend.position = "none",
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      text = element_text(family = "Verdana")
+      )
+)
+```
+
+```{r}
+## Zooming map to show Europe
+(
+  europe_map <-
+    map_data %>%
+    left_join(contt, by = c("adm0_a3" = "code")) %>%
+    ggplot(aes(fill = breaks)) +
+    geom_sf(color = "#000000") +
+    ## crop location
+    coord_sf(
+      xlim = c(-17.5, 51.4),
+      ylim = c(36.4, 70.5),
+      expand = FALSE) +
+    ## add text to map
+    annotate(
+      geom = "text",
+      x = -2.5,
+      y = 67.5,
+      label = "europe",
+      face = "italic",
+      color = "grey22",
+      size = 3,
+      family = "Verdana") +
+    ## set legend
+    scale_fill_manual(values = map_color) +
+    ## edits
+    theme(
+      panel.background = element_rect(fill = "azure"),
+      panel.border = element_rect(fill = NA),
+      axis.title = element_blank(),
+      legend.position = "none",
+      axis.text = element_blank(),
+      axis.ticks = element_blank(),
+      text = element_text(family = "Verdana")
+      )
+)
+```
+
+```{r}
+## combine all plots
+ggplot()+
+  coord_equal(xlim = c(0, 3.3), ylim = c(0,1), expand = T)+
+  annotation_custom(ggplotGrob(world_map), xmin = 0, xmax = 2.4, ymin = 0, ymax = 1)+
+  annotation_custom(ggplotGrob(europe_map), xmin = 2.4, xmax = 3.1, ymin = 0, ymax = 0.5)+
+  annotation_custom(ggplotGrob(asia_map), xmin = 2.4, xmax = 3.1, ymin = 0.5, ymax = 1)+
+  # text
+  labs(title = "Number of Artists by Country\n",
+       caption = "#tidytuesday\nData from: TATA Collection\nby Emmanuel Ugochukwu")+
+  #edits
+  theme(plot.title = element_text(hjust = 0.5, size = 20),
+        panel.background = element_rect(fill = "azure"),
+        plot.caption = element_text(size = 13, face = "italic"),
+        text = element_text(family = "Verdana"))+
+  
+  ## to save plot
+    ggsave(
+   filename = "artist_country.png",
+   width = 37, 
+   height = 22, 
+   units = "cm",
+   type = "cairo-png",
+   dpi = 300)
+```
+
+
